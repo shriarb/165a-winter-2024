@@ -42,10 +42,6 @@ for i in range(number_of_transactions):
 for i in range(num_threads):
     transaction_workers.append(TransactionWorker())
 
-
-
-
-
 # x update on every column
 for j in range(number_of_operations_per_record):
     for key in keys:

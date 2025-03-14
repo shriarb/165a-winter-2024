@@ -1,5 +1,7 @@
 from lstore.table import Table, Record
 from lstore.index import Index
+from lstore.concurrency_control import ThreadLock
+from lstore.query import Query
 
 class Transaction:
 
@@ -8,7 +10,11 @@ class Transaction:
     """
     def __init__(self):
         self.queries = []
-        pass
+
+        self.read_locks = set()
+        self.write_locks = set()
+        self.insert_locks = set()
+        self.target_table = None
 
     """
     # Adds the given query to this transaction
@@ -19,25 +25,64 @@ class Transaction:
     """
     def add_query(self, query, table, *args):
         self.queries.append((query, args))
+        if self.target_table == None:
+            self.target_table = table
         # use grades_table for aborting
 
         
     # If you choose to implement this differently this method must still return True if transaction commits or False on abort
     def run(self):
         for query, args in self.queries:
-            result = query(*args)
-            # If the query has failed the transaction should abort
-            if result == False:
-                return self.abort()
+            key = args[0]
+            if key not in self.target_table.lock_manager:
+                self.insert_locks.add(key)
+                self.target_table.lock_manager[key] = ThreadLock()
+            if key not in self.write_locks and key not in self.insert_locks:
+                if self.target_table.lock_manager[key].acquire_write_lock():
+                    self.write_locks.add(key)
+                else:
+                    return self.abort() 
         return self.commit()
-
     
     def abort(self):
-        #TODO: do roll-back and any other necessary operations
+        for key in self.read_locks:
+            self.target_table.lock_manager[key].release_read_lock()
+        for key in self.write_locks:
+            self.target_table.lock_manager[key].release_write_lock()
+        for key in self.insert_locks:
+            del self.target_table.lock_manager[key]
         return False
+
+
+        # # Release read locks
+        # [self.target_table.lock_manager[key].release_read_lock() for key in self.read_locks]
+
+        # # Release write locks
+        # [self.target_table.lock_manager[key].release_write_lock() for key in self.write_locks]
+
+        # # Remove insert locks
+        # [self.target_table.lock_manager.pop(key, None) for key in self.insert_locks]
+
+        # return False
 
     
     def commit(self):
         # TODO: commit to database
+        for query, args in self.queries:
+            query(*args)
+            if query == Query.delete:
+                 del self.target_table.lock_manager[key]
+                 if key in self.write_locks:
+                     self.insert_locks.remove(key)
+                 if key in self.insert_locks:
+                     self.insert_locks.remove(key)
+
+        for key in self.read_locks:
+            self.target_table.lock_manager[key].release_read_lock()
+        for key in self.write_locks:
+            self.target_table.lock_manager[key].release_write_lock()
+        for key in self.insert_locks:
+            self.target_table.lock_manager[key].release_write_lock()
         return True
 
+    
